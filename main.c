@@ -7,15 +7,21 @@
 #define ALIGN 16
 #define ALIGN_UP(size) (((size) + (ALIGN - 1)) & ~(ALIGN - 1))
 #define FREE_MASK 0x1
-#define GET_SIZE(size) ((size) & ~FREE_MASK)
+#define FLAGS_MASK 0xF
+#define GET_SIZE(size) ((size) & ~FLAGS_MASK)
 #define IS_FREE(size)  ((size) & FREE_MASK)
 #define SET_FREE(size)  ((size) |= FREE_MASK)
 #define SET_USED(size)  ((size) &= ~FREE_MASK)
+#define MMAP_MASK 0x2
+#define IS_MMAP(x) ((x) & MMAP_MASK)
+#define SET_MMAP(x) ((x) |= MMAP_MASK)
+#define CLEAR_MMAP(x) ((x) &= ~MMAP_MASK)
 
 
 typedef struct block_header {
   size_t size_f;
-  struct block_header *next;
+  struct block_header* next;
+  struct block_header* prev;
 } block_header;
 
 
@@ -30,6 +36,7 @@ void init_pool() {
   POOL_START->size_f = INITIAL_POOL_SIZE - sizeof(block_header);
   SET_FREE(POOL_START->size_f);
   POOL_START->next = nullptr;
+  POOL_START->prev = nullptr;
   POOL_END = POOL_START;
 }
 
@@ -45,6 +52,7 @@ static block_header* extend_pool(const long size) {
   block->size_f = extend_size - sizeof(block_header);
   SET_FREE(block->size_f);
   block->next = nullptr;
+  block->prev = POOL_END;
 
   if (!POOL_START) POOL_START = block;
   else POOL_END->next = block;
@@ -65,7 +73,9 @@ static void* mmap_alloc(size_t size) {
   const auto header = (block_header*)p;
   header->size_f = size - sizeof(block_header);
   SET_USED(header->size_f);
+  SET_MMAP(header->size_f);
   header->next = nullptr;
+  header->prev = POOL_END;
 
   if (!POOL_START) POOL_START = header;
   else POOL_END->next = header;
@@ -81,6 +91,12 @@ void split_chunk(block_header* chunk, size_t size, size_t remainder) {
   block->size_f = remainder - sizeof(block_header);
   SET_FREE(block->size_f);
   block->next = chunk->next;
+  block->prev = chunk;
+  if (block->next != nullptr) {
+    block->next->prev = block;
+  } else {
+    POOL_END = block;
+  }
   chunk->next = block;
   chunk->size_f = size;
   SET_USED(chunk->size_f);
@@ -119,8 +135,46 @@ void* alloc(size_t size) {
   return (void* ) (header + 1);
 }
 
-void free(void* p) {
 
+void coalesce() {
+  block_header* current = POOL_START;
+
+  while (current != NULL) {
+    if (IS_FREE(current->size_f) && !IS_MMAP(current->size_f)) {
+      while (current->next &&
+             IS_FREE(current->next->size_f) &&
+             !IS_MMAP(current->next->size_f)) {
+
+        block_header* next = current->next;
+
+        current->size_f = GET_SIZE(current->size_f) +
+                          sizeof(block_header) +
+                          GET_SIZE(next->size_f);
+        SET_FREE(current->size_f);
+
+        current->next = next->next;
+
+        if (next->next)
+          next->next->prev = current;
+        else
+          POOL_END = current;
+             }
+    }
+    current = current->next;
+  }
+}
+
+
+void free(void* p) {
+  const auto header = (block_header*)p - 1;
+  if (IS_MMAP(header->size_f)) {
+    const size_t total_size = GET_SIZE(header->size_f) + sizeof(block_header);
+    munmap(header, total_size);
+    return;
+  }
+  SET_FREE(header->size_f);
+
+  coalesce();
 }
 
 int main() {
