@@ -136,32 +136,15 @@ void* alloc(size_t size) {
 }
 
 
-void coalesce() {
-  block_header* current = POOL_START;
-
-  while (current != NULL) {
-    if (IS_FREE(current->size_f) && !IS_MMAP(current->size_f)) {
-      while (current->next &&
-             IS_FREE(current->next->size_f) &&
-             !IS_MMAP(current->next->size_f)) {
-
-        block_header* next = current->next;
-
-        current->size_f = GET_SIZE(current->size_f) +
-                          sizeof(block_header) +
-                          GET_SIZE(next->size_f);
-        SET_FREE(current->size_f);
-
-        current->next = next->next;
-
-        if (next->next)
-          next->next->prev = current;
-        else
-          POOL_END = current;
-             }
-    }
-    current = current->next;
-  }
+void coalesce(block_header* a) {
+  block_header *next = a->next;
+  a->size_f = GET_SIZE(a->size_f) + sizeof(block_header) + GET_SIZE(next->size_f);
+  SET_FREE(a->size_f);
+  a->next = next->next;
+  if (next->next)
+    next->next->prev = a;
+  else
+    POOL_END = a;
 }
 
 
@@ -174,7 +157,13 @@ void free(void* p) {
   }
   SET_FREE(header->size_f);
 
-  coalesce();
+  if (header->next && IS_FREE(header->next->size_f) &&
+      !IS_MMAP(header->next->size_f))
+    coalesce(header);
+
+  if (header->prev && IS_FREE(header->prev->size_f) &&
+      !IS_MMAP(header->prev->size_f))
+    coalesce(header->prev);
 }
 
 int main() {
