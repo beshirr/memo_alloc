@@ -3,7 +3,7 @@ project(memo_alloc C)
 
 set(CMAKE_C_STANDARD 23)
 
-add_executable(memo_alloc main.c
+add_executable(memo_alloc
         memoalloc.c
         memoalloc.h
         internal.h)
