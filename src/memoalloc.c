@@ -1,8 +1,8 @@
-#include "memoalloc.h"
-#include "internal.h"
+#include "../include/memoalloc.h"
+#include "../include/internal.h"
 
-static block_header* POOL_START = nullptr;
-static block_header* POOL_END = nullptr;
+static block_header* POOL_START = NULL;
+static block_header* POOL_END = NULL;
 
 static inline size_t block_size(const block_header* b) {
   return GET_SIZE(b->size_and_flags);
@@ -31,7 +31,7 @@ static block_header* find_block(size_t size) {
       return cur;
     cur = cur->next;
   }
-  return nullptr;
+  return NULL;
 }
 
 static void split(block_header* b, size_t size) {
@@ -40,7 +40,7 @@ static void split(block_header* b, size_t size) {
   if (remainder < sizeof(block_header) + ALIGN)
     return;
 
-  auto newb = (block_header*)((char*)(b + 1) + size);
+  block_header* newb = (block_header*)((char*)(b + 1) + size);
 
   newb->size_and_flags = remainder - sizeof(block_header);
   mark_free(newb);
@@ -88,11 +88,11 @@ static block_header* extend_pool(const long size) {
     extend_size = POOL_EXTEND_SIZE;
   }
   void *p = sbrk(extend_size);
-  if (p == (void *)-1) return nullptr;
-  const auto block = (block_header*)p;
+  if (p == (void *)-1) return NULL;
+  block_header* block = (block_header*)p;
   block->size_and_flags = extend_size - sizeof(block_header);
   SET_FREE(block->size_and_flags);
-  block->next = nullptr;
+  block->next = NULL;
   block->prev = POOL_END;
 
   if (!POOL_START) POOL_START = block;
@@ -101,10 +101,31 @@ static block_header* extend_pool(const long size) {
   return block;
 }
 
+void* mmap_alloc(size_t size) {
+  void* p = mmap(NULL, size,
+                 PROT_READ | PROT_WRITE,
+                 MAP_PRIVATE | MAP_ANONYMOUS,
+                 -1, 0);
+  if (p == MAP_FAILED) return NULL;
+
+  block_header* header = (block_header*)p;
+  header->size_and_flags = size - sizeof(block_header);
+  SET_USED(header->size_and_flags);
+  header->next = NULL;
+
+  if (!POOL_START) POOL_START = header;
+  else POOL_END->next = header;
+  POOL_END = header;
+
+  return (void *)(header + 1);
+}
 void* alloc(size_t size) {
   if (!size) return NULL;
 
   size = ALIGN_UP(size);
+
+  if (size > THRESHOLD) 
+      return mmap_alloc(size);
 
   block_header* b = find_block(size);
   if (b)
